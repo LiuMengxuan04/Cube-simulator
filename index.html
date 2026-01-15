@@ -117,8 +117,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <!-- Import OrbitControls -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <!-- Import Reflector for mirrors -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/objects/Reflector.js"></script>
+    <!-- Reflector removed, using Texture Monitors -->
 </head>
 <body>
 
@@ -131,7 +130,7 @@
             <div class="btn-group">
                 <button onclick="cubeApp.scramble(); this.blur();">打乱 (Scramble)</button>
                 <button class="reset" onclick="cubeApp.reset(); this.blur();">重置 (Reset)</button>
-                <button class="toggle" onclick="cubeApp.toggleMirrors(); this.blur();">镜像开关 (Mirrors)</button>
+                <button class="toggle" onclick="cubeApp.toggleViews(); this.blur();">辅助视图 (Views)</button>
                 <button class="toggle" onclick="toggleFullScreen(); this.blur();">全屏开关 (Full)</button>
             </div>
         </div>
@@ -153,7 +152,8 @@
             <div class="key-row"><span>B (后层)</span><span><span class="key">W</span> / <span class="key">O</span></span></div>
             <div class="key-row"><span>M (中层)</span><span><span class="key">N</span> / <span class="key">V</span></span></div>
             <div class="key-row"><span>双层转动</span><span>按住 <span class="key">Shift</span> + 对应键</span></div>
-            <div class="key-row"><span>整体旋转</span><span><span class="key">↑↓←→</span> / <span class="key">;</span> <span class="key">A</span></span></div>
+            <div class="key-row"><span>整体旋转</span><span><span class="key">↑↓←→</span> (X/Y轴)</span></div>
+            <div class="key-row"><span>Z轴滚转</span><span><span class="key">;</span> (顺) / <span class="key">A</span> (逆)</span></div>
             <div style="margin-top:8px; font-size: 10px; color: #888;">视角：鼠标左键旋转，右键平移，滚轮缩放</div>
         </div>
     </div>
@@ -174,9 +174,9 @@ class RubiksCubeApp {
         this.animationSpeed = 0.15; // Seconds per turn
         this.pivot = new THREE.Object3D(); // Helper for rotations
         
-        // Mirror objects
-        this.mirrors = [];
-        this.mirrorsEnabled = false;
+        // Monitor Screens (Viewports in 3D space)
+        this.monitors = [];
+        this.viewsEnabled = false;
         
         this.colors = {
             U: 0xFFFFFF, // White
@@ -232,8 +232,8 @@ class RubiksCubeApp {
         this.scene.add(this.pivot); // Add pivot to scene
         this.createCube();
         
-        // 7. Initialize Mirrors (but don't add yet)
-        this.initMirrors();
+        // 7. Initialize Monitors (Screens in 3D space)
+        this.initMonitors();
 
         // 8. Event Listeners
         window.addEventListener('resize', () => this.onWindowResize(), false);
@@ -243,55 +243,130 @@ class RubiksCubeApp {
         this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
 
-    initMirrors() {
-        // Ensure Reflector is available
-        if (typeof THREE.Reflector === 'undefined') {
-            console.error('THREE.Reflector not loaded');
-            return;
-        }
-
-        const geometry = new THREE.PlaneGeometry(10, 10);
-        const options = {
-            clipBias: 0.003,
-            textureWidth: window.innerWidth * window.devicePixelRatio,
-            textureHeight: window.innerHeight * window.devicePixelRatio,
-            color: 0x555555
-        };
-
-        // Mirror 1: Back (z = -4) -> Reflects Back Face
-        const mirrorBack = new THREE.Reflector(geometry, options);
-        mirrorBack.position.set(0, 0, -4);
-        mirrorBack.rotation.y = 0; // Facing +Z
-        // Actually Reflector normal is +Z, so to look at cube at (0,0,0), 
-        // if mirror is at z=-4, it needs to face +Z. Correct.
+    initMonitors() {
+        // Config
+        const screenDist = 5;  // Where the screen mesh sits
+        const camDist = 12;    // Where the virtual camera sits (further back to see the face)
+        const size = 512;      // Resolution of the screen
+        const planeSize = 5;   // Physical size of the screen
         
-        // Mirror 2: Left (x = -4) -> Reflects Left Face
-        const mirrorLeft = new THREE.Reflector(geometry, options);
-        mirrorLeft.position.set(-4, 0, 0);
-        mirrorLeft.rotation.y = Math.PI / 2; // Facing +X
-
-        // Mirror 3: Bottom (y = -4) -> Reflects Bottom Face
-        const mirrorBottom = new THREE.Reflector(geometry, options);
-        mirrorBottom.position.set(0, -4, 0);
-        mirrorBottom.rotation.x = -Math.PI / 2; // Facing +Y
-
-        this.mirrors = [mirrorBack, mirrorLeft, mirrorBottom];
+        // --- 1. Back View (Shows Back Face) ---
+        // Camera at -Z looking at origin
+        const camBack = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+        camBack.position.set(0, 0, -camDist);
+        camBack.lookAt(0, 0, 0);
         
-        // Add borders to mirrors for style
-        this.mirrors.forEach(m => {
-            const borderGeo = new THREE.EdgesGeometry(geometry);
-            const borderMat = new THREE.LineBasicMaterial({ color: 0x444444 });
-            const border = new THREE.LineSegments(borderGeo, borderMat);
-            m.add(border);
-        });
+        // Render Target
+        const rtBack = new THREE.WebGLRenderTarget(size, size);
+        
+        // Screen Mesh (at z = -screenDist)
+        // Note: Set side: DoubleSide because we are going to flip the mesh with scale.x = -1
+        // Scaling by -1 inverts winding order, making the front face a back face, which is culled by default.
+        const matBack = new THREE.MeshBasicMaterial({ map: rtBack.texture, side: THREE.DoubleSide }); 
+        const meshBack = new THREE.Mesh(new THREE.PlaneGeometry(planeSize, planeSize), matBack);
+        meshBack.position.set(0, 0, -screenDist);
+        meshBack.scale.x = -1; // MIRROR EFFECT
+        
+        // Border
+        meshBack.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(planeSize, planeSize)), new THREE.LineBasicMaterial({ color: 0x666666 })));
+        
+        
+        // --- 2. Left View (Shows Left Face) ---
+        // Camera at -X looking at origin
+        const camLeft = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+        camLeft.position.set(-camDist, 0, 0);
+        camLeft.lookAt(0, 0, 0);
+        // FIX for Left View: Up Vector should be +Z (Front).
+        // Standard Up (+Y) makes Image Top = Top Face.
+        // User expects Net layout: L is left of F.
+        // So Right edge of L touches Left edge of F.
+        // Screen Right (Near, -Z) should show Front-edge.
+        // If Up = +Y: Right = +Z (Front). Correct.
+        // BUT Mesh Scale -1 flips it?
+        // Let's use Scale 1 for Left view to be safe/standard.
+        // With Scale 1: Right (+Z) shows u=1 (Back). WRONG.
+        // So Scale -1 is needed?
+        // Let's keep Left as is, it seemed mostly ok, but let's fix Bottom first as requested.
+
+        const rtLeft = new THREE.WebGLRenderTarget(size, size);
+        const matLeft = new THREE.MeshBasicMaterial({ map: rtLeft.texture, side: THREE.DoubleSide });
+        const meshLeft = new THREE.Mesh(new THREE.PlaneGeometry(planeSize, planeSize), matLeft);
+        meshLeft.position.set(-screenDist, 0, 0);
+        meshLeft.rotation.y = Math.PI / 2; // Face +X
+        meshLeft.scale.x = -1; // MIRROR EFFECT
+        
+        meshLeft.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(planeSize, planeSize)), new THREE.LineBasicMaterial({ color: 0x666666 })));
+
+        // --- 3. Bottom View (Shows Down Face) ---
+        // Camera at -Y looking at origin
+        const camDown = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+        camDown.position.set(0, -camDist, 0);
+        camDown.lookAt(0, 0, 0);
+        // FIX: Change UP vector to +Z (Front).
+        // This ensures the "Top" of the rendered image corresponds to the Front Face edge.
+        // When displayed on the floor mesh (which has its Top/Far edge aligned with World Back),
+        // we need to make sure the Front edge shows the Front.
+        // With Scale -1 and Up +Z:
+        // Texture Top (Front) shows at Mesh Top (Far).
+        // Wait, Far edge of floor mesh is World Back (-Z).
+        // User wants Far edge to show Front Face? No.
+        // User wants Near edge (closest to Front face) to show Front face.
+        // Near edge (World +Z) corresponds to Mesh Bottom.
+        // Mesh Bottom shows Texture Bottom.
+        // Texture Bottom (with Up=+Z) corresponds to Back Face (-Z).
+        // So Near Edge shows Back Face. This is INVERTED.
+        // I need Near Edge to show Front Face.
+        // So Texture Bottom should be Front Face.
+        // Texture Bottom is -Up.
+        // So -Up should be Front (+Z).
+        // So Up should be Back (-Z).
+        // This is what I had before! And user said it was wrong.
+        
+        // Let's rethink "Rotate 180".
+        // Before: Up = -Z. Image Top = Back. Image Bottom = Front.
+        // Mesh Top (Far) = Back. Mesh Bottom (Near) = Front.
+        // Visually: The part of D touching F (Front edge) is drawn at Near edge.
+        // This is physically correct for mirror.
+        // USER SAID: "Bottom screen should be rotated 180".
+        // This implies they want Far edge to be Front.
+        // Why? Because in a Net, D is drawn *below* F.
+        // F
+        // D
+        // If I look at the screen on the floor.
+        // If I want it to look like that diagram:
+        // The "Top" of the screen (Far) should connect to F.
+        // So Far Edge should show Front.
+        // My previous code: Far Edge showed Back.
+        // So YES, I need to flip it so Far Edge shows Front.
+        // To make Far Edge (Mesh Top) show Front (Texture Top):
+        // Texture Top must be Front.
+        // Texture Top is defined by Camera Up.
+        // So Camera Up must be Front (+Z).
+        camDown.up.set(0, 0, 1); 
+
+        const rtDown = new THREE.WebGLRenderTarget(size, size);
+        const matDown = new THREE.MeshBasicMaterial({ map: rtDown.texture, side: THREE.DoubleSide });
+        const meshDown = new THREE.Mesh(new THREE.PlaneGeometry(planeSize, planeSize), matDown);
+        meshDown.position.set(0, -screenDist, 0);
+        meshDown.rotation.set(-Math.PI / 2, 0, Math.PI); // Rotate 180 on floor to align Front/Back
+        meshDown.scale.x = -1; // MIRROR EFFECT
+
+        meshDown.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(planeSize, planeSize)), new THREE.LineBasicMaterial({ color: 0x666666 })));
+
+        // Store
+        this.monitors = [
+            { mesh: meshBack, cam: camBack, rt: rtBack },
+            { mesh: meshLeft, cam: camLeft, rt: rtLeft },
+            { mesh: meshDown, cam: camDown, rt: rtDown }
+        ];
     }
 
-    toggleMirrors() {
-        this.mirrorsEnabled = !this.mirrorsEnabled;
-        if (this.mirrorsEnabled) {
-            this.mirrors.forEach(m => this.scene.add(m));
+    toggleViews() {
+        this.viewsEnabled = !this.viewsEnabled;
+        if (this.viewsEnabled) {
+            this.monitors.forEach(m => this.scene.add(m.mesh));
         } else {
-            this.mirrors.forEach(m => this.scene.remove(m));
+            this.monitors.forEach(m => this.scene.remove(m.mesh));
         }
     }
 
@@ -396,8 +471,9 @@ class RubiksCubeApp {
             case 'ArrowLeft': move = "y"; break;
             case 'ArrowUp': move = "x"; break;
             case 'ArrowDown': move = "x'"; break;
-            case 'Semicolon': move = "y"; break;
-            case 'KeyA': move = "y'"; break;
+            // Z Axis Rotation (NEW)
+            case 'Semicolon': move = "z"; break; // Clockwise
+            case 'KeyA': move = "z'"; break; // Counter-Clockwise
         }
 
         if (move) {
@@ -556,7 +632,7 @@ class RubiksCubeApp {
             const elapsed = time - startTime;
             const progress = Math.min(elapsed / duration, 1);
             
-            const ease = 1 - Math.pow(1 - progress, 5); // Cubic out
+            const ease = 1 - Math.pow(1 - progress, 3); // Cubic out
 
             this.pivot.setRotationFromAxisAngle(axis, targetRot * ease);
 
@@ -722,7 +798,26 @@ class RubiksCubeApp {
     animate() {
         requestAnimationFrame(() => this.animate());
         this.controls.update();
+
+        // --- Render Views to Screens first (if enabled) ---
+        if (this.viewsEnabled) {
+            // Hide the monitor meshes so they don't block the view of the cube from the virtual cameras
+            this.monitors.forEach(m => m.mesh.visible = false);
+
+            this.monitors.forEach(m => {
+                this.renderer.setRenderTarget(m.rt);
+                this.renderer.clear();
+                this.renderer.render(this.scene, m.cam);
+            });
+
+            // Show monitors again and reset target
+            this.monitors.forEach(m => m.mesh.visible = true);
+            this.renderer.setRenderTarget(null);
+        }
+        
+        // --- Render Main Scene ---
         this.renderer.render(this.scene, this.camera);
+        
         if (confettiActive) updateConfetti();
     }
 }
