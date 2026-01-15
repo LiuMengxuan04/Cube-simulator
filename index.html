@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WCA 3D 魔方模拟器 (加强版)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: 'Segoe UI', sans-serif; user-select: none; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            pointer-events: auto;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+        }
+
+        #scramble-display {
+            color: #fff;
+            font-size: 1.2rem;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px 20px;
+            border-radius: 8px;
+            max-width: 80%;
+            font-family: monospace;
+        }
+
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+        
+        button {
+            background: #4caf50;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            transition: transform 0.1s, background 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            white-space: nowrap;
+        }
+        button:hover { background: #45a049; transform: translateY(-1px); }
+        button:active { transform: translateY(1px); }
+        button.secondary { background: #555; }
+        button.reset { background: #d32f2f; }
+        button.toggle { background: #2196F3; }
+
+        /* Help / Controls */
+        #controls-help {
+            position: absolute;
+            left: 20px;
+            bottom: 20px;
+            color: rgba(255, 255, 255, 0.7);
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            pointer-events: auto;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .key-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .key { color: #4caf50; font-weight: bold; font-family: monospace; }
+        h3 { margin: 0 0 10px 0; color: white; font-size: 14px; }
+        
+        /* Win Message */
+        #win-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 4rem;
+            color: #ffd700;
+            font-weight: 900;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+            opacity: 0;
+            transition: opacity 0.5s;
+            pointer-events: none;
+            z-index: 100;
+            text-align: center;
+        }
+        #win-sub { font-size: 1.5rem; color: white; display: block; margin-top: 10px; }
+
+        /* Confetti Canvas */
+        #confetti-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 99;
+        }
+    </style>
+    <!-- Import Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Import OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- Import Reflector for mirrors -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/objects/Reflector.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <canvas id="confetti-canvas"></canvas>
+
+    <div id="ui-layer">
+        <div class="top-bar">
+            <div id="scramble-display">点击“打乱”开始</div>
+            <div class="btn-group">
+                <button onclick="cubeApp.scramble(); this.blur();">打乱 (Scramble)</button>
+                <button class="reset" onclick="cubeApp.reset(); this.blur();">重置 (Reset)</button>
+                <button class="toggle" onclick="cubeApp.toggleMirrors(); this.blur();">镜像开关 (Mirrors)</button>
+                <button class="toggle" onclick="toggleFullScreen(); this.blur();">全屏开关 (Full)</button>
+            </div>
+        </div>
+
+        <div id="win-message">
+            SOLVED!
+            <span id="win-sub">恭喜还原！</span>
+        </div>
+
+        <div id="controls-help">
+            <h3>WCA 键盘控制 (键盘模拟)</h3>
+            <div class="key-row"><span>转动面</span><span>正转 / 反转</span></div>
+            <hr style="border: 0; border-top: 1px solid #444; margin: 5px 0;">
+            <div class="key-row"><span>R (右层)</span><span><span class="key">I</span> / <span class="key">K</span></span></div>
+            <div class="key-row"><span>L (左层)</span><span><span class="key">D</span> / <span class="key">E</span></span></div>
+            <div class="key-row"><span>U (上层)</span><span><span class="key">J</span> / <span class="key">F</span></span></div>
+            <div class="key-row"><span>D (下层)</span><span><span class="key">S</span> / <span class="key">L</span></span></div>
+            <div class="key-row"><span>F (前层)</span><span><span class="key">H</span> / <span class="key">G</span></span></div>
+            <div class="key-row"><span>B (后层)</span><span><span class="key">W</span> / <span class="key">O</span></span></div>
+            <div class="key-row"><span>M (中层)</span><span><span class="key">N</span> / <span class="key">V</span></span></div>
+            <div class="key-row"><span>双层转动</span><span>按住 <span class="key">Shift</span> + 对应键</span></div>
+            <div class="key-row"><span>整体旋转</span><span><span class="key">↑↓←→</span> / <span class="key">;</span> <span class="key">A</span></span></div>
+            <div style="margin-top:8px; font-size: 10px; color: #888;">视角：鼠标左键旋转，右键平移，滚轮缩放</div>
+        </div>
+    </div>
+
+<script>
+/**
+ * WCA Rubik's Cube Simulator Logic
+ */
+class RubiksCubeApp {
+    constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        this.cubies = []; // Array of 27 mesh objects
+        this.isAnimating = false;
+        this.moveQueue = [];
+        this.animationSpeed = 0.15; // Seconds per turn
+        this.pivot = new THREE.Object3D(); // Helper for rotations
+        
+        // Mirror objects
+        this.mirrors = [];
+        this.mirrorsEnabled = false;
+        
+        this.colors = {
+            U: 0xFFFFFF, // White
+            D: 0xFFD500, // Yellow
+            F: 0x009E60, // Green
+            B: 0x0051BA, // Blue
+            R: 0xC41E3A, // Red
+            L: 0xFF5800, // Orange
+            Core: 0x111111 // Black plastic
+        };
+
+        this.init();
+        this.animate();
+    }
+
+    init() {
+        // 1. Scene Setup
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x222222);
+
+        // 2. Camera
+        this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        this.camera.position.set(5, 5, 7);
+        this.camera.lookAt(0, 0, 0);
+
+        // 3. Renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.shadowMap.enabled = true;
+        document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+
+        // 4. Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        this.scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        this.scene.add(dirLight);
+
+        const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        backLight.position.set(-10, -10, -10);
+        this.scene.add(backLight);
+
+        // 5. Controls
+        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.enablePan = false;
+
+        // 6. Build Cube
+        this.scene.add(this.pivot); // Add pivot to scene
+        this.createCube();
+        
+        // 7. Initialize Mirrors (but don't add yet)
+        this.initMirrors();
+
+        // 8. Event Listeners
+        window.addEventListener('resize', () => this.onWindowResize(), false);
+        window.addEventListener('keydown', (e) => this.handleInput(e), false);
+
+        // Start Sound (Optional context)
+        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    initMirrors() {
+        // Ensure Reflector is available
+        if (typeof THREE.Reflector === 'undefined') {
+            console.error('THREE.Reflector not loaded');
+            return;
+        }
+
+        const geometry = new THREE.PlaneGeometry(10, 10);
+        const options = {
+            clipBias: 0.003,
+            textureWidth: window.innerWidth * window.devicePixelRatio,
+            textureHeight: window.innerHeight * window.devicePixelRatio,
+            color: 0x555555
+        };
+
+        // Mirror 1: Back (z = -4) -> Reflects Back Face
+        const mirrorBack = new THREE.Reflector(geometry, options);
+        mirrorBack.position.set(0, 0, -4);
+        mirrorBack.rotation.y = 0; // Facing +Z
+        // Actually Reflector normal is +Z, so to look at cube at (0,0,0), 
+        // if mirror is at z=-4, it needs to face +Z. Correct.
+        
+        // Mirror 2: Left (x = -4) -> Reflects Left Face
+        const mirrorLeft = new THREE.Reflector(geometry, options);
+        mirrorLeft.position.set(-4, 0, 0);
+        mirrorLeft.rotation.y = Math.PI / 2; // Facing +X
+
+        // Mirror 3: Bottom (y = -4) -> Reflects Bottom Face
+        const mirrorBottom = new THREE.Reflector(geometry, options);
+        mirrorBottom.position.set(0, -4, 0);
+        mirrorBottom.rotation.x = -Math.PI / 2; // Facing +Y
+
+        this.mirrors = [mirrorBack, mirrorLeft, mirrorBottom];
+        
+        // Add borders to mirrors for style
+        this.mirrors.forEach(m => {
+            const borderGeo = new THREE.EdgesGeometry(geometry);
+            const borderMat = new THREE.LineBasicMaterial({ color: 0x444444 });
+            const border = new THREE.LineSegments(borderGeo, borderMat);
+            m.add(border);
+        });
+    }
+
+    toggleMirrors() {
+        this.mirrorsEnabled = !this.mirrorsEnabled;
+        if (this.mirrorsEnabled) {
+            this.mirrors.forEach(m => this.scene.add(m));
+        } else {
+            this.mirrors.forEach(m => this.scene.remove(m));
+        }
+    }
+
+    createCube() {
+        // Clear existing
+        this.cubies.forEach(c => this.scene.remove(c));
+        this.cubies = [];
+
+        const geometry = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+        // We create a slightly smaller box for the black plastic, and planes for stickers
+        
+        for (let x = -1; x <= 1; x++) {
+            for (let y = -1; y <= 1; y++) {
+                for (let z = -1; z <= 1; z++) {
+                    const materials = [
+                        new THREE.MeshStandardMaterial({ color: this.colors.Core, roughness: 0.6 }), // R placeholder
+                        new THREE.MeshStandardMaterial({ color: this.colors.Core, roughness: 0.6 }), // L placeholder
+                        new THREE.MeshStandardMaterial({ color: this.colors.Core, roughness: 0.6 }), // U placeholder
+                        new THREE.MeshStandardMaterial({ color: this.colors.Core, roughness: 0.6 }), // D placeholder
+                        new THREE.MeshStandardMaterial({ color: this.colors.Core, roughness: 0.6 }), // F placeholder
+                        new THREE.MeshStandardMaterial({ color: this.colors.Core, roughness: 0.6 })  // B placeholder
+                    ];
+
+                    const cubie = new THREE.Mesh(geometry, materials);
+                    cubie.position.set(x, y, z);
+                    
+                    // Add Stickers
+                    const stickerGeo = new THREE.PlaneGeometry(0.88, 0.88);
+                    const createSticker = (color, rotX, rotY, posOffset) => {
+                        const mat = new THREE.MeshStandardMaterial({ 
+                            color: color, 
+                            roughness: 0.2, 
+                            metalness: 0.0 
+                        });
+                        const mesh = new THREE.Mesh(stickerGeo, mat);
+                        mesh.rotation.set(rotX, rotY, 0);
+                        mesh.position.add(posOffset);
+                        // Slightly offset to prevent z-fighting
+                        return mesh;
+                    };
+
+                    // Right (x=1)
+                    if (x === 1) cubie.add(createSticker(this.colors.R, 0, Math.PI/2, new THREE.Vector3(0.48, 0, 0)));
+                    // Left (x=-1)
+                    if (x === -1) cubie.add(createSticker(this.colors.L, 0, -Math.PI/2, new THREE.Vector3(-0.48, 0, 0)));
+                    // Top (y=1)
+                    if (y === 1) cubie.add(createSticker(this.colors.U, -Math.PI/2, 0, new THREE.Vector3(0, 0.48, 0)));
+                    // Bottom (y=-1)
+                    if (y === -1) cubie.add(createSticker(this.colors.D, Math.PI/2, 0, new THREE.Vector3(0, -0.48, 0)));
+                    // Front (z=1)
+                    if (z === 1) cubie.add(createSticker(this.colors.F, 0, 0, new THREE.Vector3(0, 0, 0.48)));
+                    // Back (z=-1)
+                    if (z === -1) cubie.add(createSticker(this.colors.B, 0, Math.PI, new THREE.Vector3(0, 0, -0.48)));
+
+                    // Store initial ID to track solved state simply (optional, but visual check is better)
+                    cubie.userData = { 
+                        initialPos: new THREE.Vector3(x,y,z),
+                        isCore: (x===0 && y===0 && z===0)
+                    };
+
+                    this.scene.add(cubie);
+                    this.cubies.push(cubie);
+                }
+            }
+        }
+    }
+
+    handleInput(e) {
+        if (e.repeat) return; // Prevent hold spamming
+        
+        const key = e.code;
+        // Use Shift key for wide moves
+        const isWide = e.shiftKey; 
+
+        let move = null;
+
+        // Mapping
+        switch(key) {
+            // Right
+            case 'KeyI': move = isWide ? 'r' : 'R'; break;
+            case 'KeyK': move = isWide ? "r'" : "R'"; break;
+            // Left
+            case 'KeyD': move = isWide ? 'l' : 'L'; break;
+            case 'KeyE': move = isWide ? "l'" : "L'"; break;
+            // Up
+            case 'KeyJ': move = isWide ? 'u' : 'U'; break;
+            case 'KeyF': move = isWide ? "u'" : "U'"; break;
+            // Down
+            case 'KeyS': move = isWide ? 'd' : 'D'; break;
+            case 'KeyL': move = isWide ? "d'" : "D'"; break;
+            // Front
+            case 'KeyH': move = isWide ? 'f' : 'F'; break;
+            case 'KeyG': move = isWide ? "f'" : "F'"; break;
+            // Back
+            case 'KeyW': move = isWide ? 'b' : 'B'; break;
+            case 'KeyO': move = isWide ? "b'" : "B'"; break;
+            // Middle Slice (M follows L direction)
+            case 'KeyN': move = 'M'; break; 
+            case 'KeyV': move = "M'"; break;
+            // Rotations
+            case 'ArrowRight': move = "y'"; break; // Rotate cube right
+            case 'ArrowLeft': move = "y"; break;
+            case 'ArrowUp': move = "x"; break;
+            case 'ArrowDown': move = "x'"; break;
+            case 'Semicolon': move = "y"; break;
+            case 'KeyA': move = "y'"; break;
+        }
+
+        if (move) {
+            this.queueMove(move);
+        }
+    }
+
+    queueMove(moveStr) {
+        this.moveQueue.push(moveStr);
+        this.processQueue();
+    }
+
+    processQueue() {
+        if (this.isAnimating || this.moveQueue.length === 0) return;
+
+        const moveStr = this.moveQueue.shift();
+        this.executeMove(moveStr);
+    }
+
+    getAxisAndGroup(move) {
+        const EPS = 0.1;
+        let axis = new THREE.Vector3(); // Rotation axis
+        let angle = -Math.PI / 2; // Default clockwise
+        let filter = (pos) => false;
+        
+        // Clean string
+        let base = move.charAt(0);
+        let isPrime = move.includes("'");
+        let isDouble = move.includes("2");
+        let isWide = (base === base.toLowerCase() && base !== 'x' && base !== 'y' && base !== 'z');
+
+        if (isPrime) angle = Math.PI / 2;
+        if (isDouble) angle *= 2;
+
+        base = base.toUpperCase();
+
+        // Coordinates: Right is +X, Up is +Y, Front is +Z
+        
+        switch(base) {
+            case 'R': 
+                axis.set(1, 0, 0); 
+                filter = p => p.x > EPS; // x = 1
+                if (isWide) filter = p => p.x > -EPS; // x = 0, 1
+                break;
+            case 'L': 
+                axis.set(-1, 0, 0); 
+                filter = p => p.x < -EPS; // x = -1
+                if (isWide) filter = p => p.x < EPS; // x = 0, -1
+                if (!isWide && !isPrime) angle *= -1; // L is inverse of R directionally relative to X axis
+                break;
+            
+            case 'U':
+                axis.set(0, 1, 0);
+                filter = p => p.y > EPS;
+                if (isWide) filter = p => p.y > -EPS;
+                angle = -Math.PI/2;
+                if (isPrime) angle = Math.PI/2;
+                break;
+
+            case 'D':
+                axis.set(0, 1, 0);
+                filter = p => p.y < -EPS;
+                if (isWide) filter = p => p.y < EPS;
+                angle = Math.PI/2; // D is opposite U
+                if (isPrime) angle = -Math.PI/2;
+                break;
+
+            case 'F':
+                axis.set(0, 0, 1);
+                filter = p => p.z > EPS;
+                if (isWide) filter = p => p.z > -EPS;
+                angle = -Math.PI/2;
+                if (isPrime) angle = Math.PI/2;
+                break;
+
+            case 'B':
+                axis.set(0, 0, 1);
+                filter = p => p.z < -EPS;
+                if (isWide) filter = p => p.z < EPS;
+                angle = Math.PI/2; // B is opposite F
+                if (isPrime) angle = -Math.PI/2;
+                break;
+
+            case 'M': // Middle Slice, follows L direction
+                axis.set(1, 0, 0);
+                filter = p => Math.abs(p.x) < EPS;
+                angle = Math.PI/2; 
+                if (isPrime) angle = -Math.PI/2;
+                break;
+            
+            case 'E': // Equatorial, follows D direction
+                axis.set(0, 1, 0);
+                filter = p => Math.abs(p.y) < EPS;
+                angle = Math.PI/2; 
+                if (isPrime) angle = -Math.PI/2;
+                break;
+
+            case 'S': // Standing, follows F direction
+                axis.set(0, 0, 1);
+                filter = p => Math.abs(p.z) < EPS;
+                angle = -Math.PI/2; 
+                if (isPrime) angle = Math.PI/2;
+                break;
+
+            // Whole Cube Rotations
+            case 'X': // Rotate whole cube on R axis
+                axis.set(1, 0, 0);
+                filter = p => true;
+                angle = -Math.PI/2;
+                if (isPrime) angle = Math.PI/2;
+                break;
+            case 'Y': // Rotate whole cube on U axis
+                axis.set(0, 1, 0);
+                filter = p => true;
+                angle = -Math.PI/2;
+                if (isPrime) angle = Math.PI/2;
+                break;
+            case 'Z': // Rotate whole cube on F axis
+                axis.set(0, 0, 1);
+                filter = p => true;
+                angle = -Math.PI/2;
+                if (isPrime) angle = Math.PI/2;
+                break;
+        }
+
+        if (isDouble) angle *= 2;
+
+        return { axis, angle, filter };
+    }
+
+    executeMove(moveStr) {
+        this.isAnimating = true;
+        this.playSound();
+
+        const { axis, angle, filter } = this.getAxisAndGroup(moveStr);
+        
+        // 1. Select Cubies
+        const activeCubies = this.cubies.filter(c => filter(c.position));
+
+        // 2. Attach to Pivot
+        this.pivot.rotation.set(0, 0, 0);
+        this.pivot.updateMatrixWorld();
+        
+        activeCubies.forEach(c => {
+            this.pivot.attach(c);
+        });
+
+        // 3. Animate
+        const startRot = 0;
+        const targetRot = angle;
+        const duration = this.animationSpeed * 1000;
+        let startTime = null;
+
+        const animateTurn = (time) => {
+            if (!startTime) startTime = time;
+            const elapsed = time - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            const ease = 1 - Math.pow(1 - progress, 5); // Cubic out
+
+            this.pivot.setRotationFromAxisAngle(axis, targetRot * ease);
+
+            if (progress < 1) {
+                requestAnimationFrame(animateTurn);
+            } else {
+                // Finish
+                this.pivot.setRotationFromAxisAngle(axis, targetRot);
+                this.pivot.updateMatrixWorld();
+                
+                // Detach and snap
+                activeCubies.forEach(c => {
+                    this.scene.attach(c);
+                    c.position.x = Math.round(c.position.x);
+                    c.position.y = Math.round(c.position.y);
+                    c.position.z = Math.round(c.position.z);
+                    
+                    const e = new THREE.Euler().setFromQuaternion(c.quaternion); 
+                    e.x = Math.round(e.x / (Math.PI/2)) * (Math.PI/2);
+                    e.y = Math.round(e.y / (Math.PI/2)) * (Math.PI/2);
+                    e.z = Math.round(e.z / (Math.PI/2)) * (Math.PI/2);
+                    c.rotation.set(e.x, e.y, e.z);
+                    c.updateMatrixWorld();
+                });
+
+                this.isAnimating = false;
+                this.checkSolved();
+                this.processQueue();
+            }
+        };
+
+        requestAnimationFrame(animateTurn);
+    }
+
+    scramble() {
+        if (this.isAnimating) return;
+        this.reset();
+        
+        const moves = ['R', 'L', 'U', 'D', 'F', 'B'];
+        const suffixes = ['', "'", '2'];
+        let scrambleSeq = [];
+        let lastMove = -1;
+        
+        for (let i = 0; i < 20; i++) {
+            let r;
+            do {
+                r = Math.floor(Math.random() * moves.length);
+            } while (r === lastMove); 
+            
+            lastMove = r;
+            const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+            scrambleSeq.push(moves[r] + suffix);
+        }
+
+        const scrambleStr = scrambleSeq.join(" ");
+        document.getElementById('scramble-display').innerText = scrambleStr;
+
+        const oldSpeed = this.animationSpeed;
+        this.animationSpeed = 0.05; 
+        
+        scrambleSeq.forEach(m => this.queueMove(m));
+        
+        setTimeout(() => { this.animationSpeed = 0.15; }, 100);
+    }
+
+    reset() {
+        this.moveQueue = [];
+        this.isAnimating = false;
+        this.createCube();
+        this.camera.position.set(5, 5, 7);
+        this.camera.lookAt(0,0,0);
+        document.getElementById('win-message').style.opacity = '0';
+        document.getElementById('scramble-display').innerText = "点击“打乱”开始";
+        confettiActive = false;
+        ctx.clearRect(0,0, canvas.width, canvas.height);
+        
+        // Don't reset mirrors, keep user preference
+    }
+
+    checkSolved() {
+        const axes = [
+            { dir: new THREE.Vector3(1,0,0), name: 'R' },
+            { dir: new THREE.Vector3(-1,0,0), name: 'L' },
+            { dir: new THREE.Vector3(0,1,0), name: 'U' },
+            { dir: new THREE.Vector3(0,-1,0), name: 'D' },
+            { dir: new THREE.Vector3(0,0,1), name: 'F' },
+            { dir: new THREE.Vector3(0,0,-1), name: 'B' }
+        ];
+
+        let solved = true;
+
+        for (let axis of axes) {
+            const faceCubies = this.cubies.filter(c => {
+                const pos = c.position.clone();
+                return Math.abs(pos.dot(axis.dir) - 1) < 0.1;
+            });
+            
+            if (faceCubies.length !== 9) continue; 
+
+            let firstColor = null;
+
+            for (let c of faceCubies) {
+                const localNormals = [
+                    { v: new THREE.Vector3(1,0,0), color: 'R' },
+                    { v: new THREE.Vector3(-1,0,0), color: 'L' },
+                    { v: new THREE.Vector3(0,1,0), color: 'U' },
+                    { v: new THREE.Vector3(0,-1,0), color: 'D' },
+                    { v: new THREE.Vector3(0,0,1), color: 'F' },
+                    { v: new THREE.Vector3(0,0,-1), color: 'B' }
+                ];
+
+                let myColor = null;
+                for (let ln of localNormals) {
+                    const worldNormal = ln.v.clone().applyQuaternion(c.quaternion);
+                    if (worldNormal.dot(axis.dir) > 0.9) {
+                        myColor = ln.color;
+                        break;
+                    }
+                }
+                
+                if (!firstColor) firstColor = myColor;
+                if (myColor !== firstColor) {
+                    solved = false;
+                    break;
+                }
+            }
+            if (!solved) break;
+        }
+
+        if (solved && !this.isAnimating && this.moveQueue.length === 0) {
+             if (document.getElementById('scramble-display').innerText !== "点击“打乱”开始") {
+                this.triggerWin();
+             }
+        }
+    }
+
+    triggerWin() {
+        document.getElementById('win-message').style.opacity = '1';
+        startConfetti();
+        this.playSound(600, 0.1, 'sine');
+        setTimeout(() => this.playSound(800, 0.2, 'sine'), 150);
+    }
+
+    playSound(freq = 200, duration = 0.05, type = 'triangle') {
+        if (!this.audioCtx) return;
+        const osc = this.audioCtx.createOscillator();
+        const gain = this.audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(this.audioCtx.destination);
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.00001, this.audioCtx.currentTime + duration);
+        osc.stop(this.audioCtx.currentTime + duration);
+    }
+
+    onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+        this.controls.update();
+        this.renderer.render(this.scene, this.camera);
+        if (confettiActive) updateConfetti();
+    }
+}
+
+// --- FULLSCREEN LOGIC ---
+function toggleFullScreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        }
+    }
+}
+
+// --- CONFETTI LOGIC ---
+const canvas = document.getElementById('confetti-canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let particles = [];
+let confettiActive = false;
+
+function startConfetti() {
+    confettiActive = true;
+    for(let i=0; i<150; i++) {
+        particles.push({
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+            vx: (Math.random() - 0.5) * 20,
+            vy: (Math.random() - 1) * 20 - 5,
+            color: `hsl(${Math.random()*360}, 100%, 50%)`,
+            size: Math.random() * 10 + 5,
+            rotation: Math.random() * 360,
+            rotationSpeed: (Math.random() - 0.5) * 10
+        });
+    }
+}
+
+function updateConfetti() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particles.forEach((p, index) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.5; // Gravity
+        p.rotation += p.rotationSpeed;
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation * Math.PI / 180);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
+        ctx.restore();
+
+        if(p.y > window.innerHeight) {
+            particles.splice(index, 1);
+        }
+    });
+    
+    if(particles.length === 0) confettiActive = false;
+}
+
+// Initialize
+const cubeApp = new RubiksCubeApp();
+
+</script>
+</body>
+</html>
