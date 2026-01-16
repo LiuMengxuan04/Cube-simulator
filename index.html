@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WCA 3D 魔方模拟器 (加强版)</title>
+    <title>WCA 3D 魔方模拟器</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: 'Segoe UI', sans-serif; user-select: none; }
         #canvas-container { width: 100vw; height: 100vh; display: block; }
@@ -152,8 +152,8 @@
             <div class="key-row"><span>B (后层)</span><span><span class="key">W</span> / <span class="key">O</span></span></div>
             <div class="key-row"><span>M (中层)</span><span><span class="key">N</span> / <span class="key">V</span></span></div>
             <div class="key-row"><span>双层转动</span><span>按住 <span class="key">Shift</span> + 对应键</span></div>
-            <div class="key-row"><span>整体旋转</span><span><span class="key">↑↓←→</span> (X/Y轴)</span></div>
-            <div class="key-row"><span>Z轴滚转</span><span><span class="key">;</span> (顺) / <span class="key">A</span> (逆)</span></div>
+            <div class="key-row"><span>整体旋转</span><span><span class="key">↑↓</span> (X) / <span class="key">; A</span> (Y)</span></div>
+            <div class="key-row"><span>Z轴滚转</span><span><span class="key">←→</span> (Z)</span></div>
             <div style="margin-top:8px; font-size: 10px; color: #888;">视角：鼠标左键旋转，右键平移，滚轮缩放</div>
         </div>
     </div>
@@ -264,7 +264,7 @@ class RubiksCubeApp {
         // Scaling by -1 inverts winding order, making the front face a back face, which is culled by default.
         const matBack = new THREE.MeshBasicMaterial({ map: rtBack.texture, side: THREE.DoubleSide }); 
         const meshBack = new THREE.Mesh(new THREE.PlaneGeometry(planeSize, planeSize), matBack);
-        meshBack.position.set(0, 0, -screenDist);
+        meshBack.position.set(0, 0, -screenDist-2.7);
         meshBack.scale.x = -1; // MIRROR EFFECT
         
         // Border
@@ -347,7 +347,7 @@ class RubiksCubeApp {
         const rtDown = new THREE.WebGLRenderTarget(size, size);
         const matDown = new THREE.MeshBasicMaterial({ map: rtDown.texture, side: THREE.DoubleSide });
         const meshDown = new THREE.Mesh(new THREE.PlaneGeometry(planeSize, planeSize), matDown);
-        meshDown.position.set(0, -screenDist, 0);
+        meshDown.position.set(0, -screenDist+0.3, 0);
         meshDown.rotation.set(-Math.PI / 2, 0, Math.PI); // Rotate 180 on floor to align Front/Back
         meshDown.scale.x = -1; // MIRROR EFFECT
 
@@ -467,13 +467,14 @@ class RubiksCubeApp {
             case 'KeyN': move = 'M'; break; 
             case 'KeyV': move = "M'"; break;
             // Rotations
-            case 'ArrowRight': move = "y'"; break; // Rotate cube right
-            case 'ArrowLeft': move = "y"; break;
+            case 'ArrowRight': move = "z"; break; // Roll right (Clockwise Z)
+            case 'ArrowLeft': move = "z'"; break; // Roll left (CCW Z)
             case 'ArrowUp': move = "x"; break;
             case 'ArrowDown': move = "x'"; break;
-            // Z Axis Rotation (NEW)
-            case 'Semicolon': move = "z"; break; // Clockwise
-            case 'KeyA': move = "z'"; break; // Counter-Clockwise
+            
+            // Y Axis Rotation (Swapped with Z)
+            case 'Semicolon': move = "y'"; break; // Turn Right
+            case 'KeyA': move = "y"; break; // Turn Left
         }
 
         if (move) {
@@ -522,7 +523,7 @@ class RubiksCubeApp {
                 axis.set(-1, 0, 0); 
                 filter = p => p.x < -EPS; // x = -1
                 if (isWide) filter = p => p.x < EPS; // x = 0, -1
-                if (!isWide && !isPrime) angle *= -1; // L is inverse of R directionally relative to X axis
+                angle *= -1; // L direction is inverse of R relative to X axis
                 break;
             
             case 'U':
